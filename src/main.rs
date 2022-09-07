@@ -96,16 +96,17 @@ impl State {
     fn broadcast_message(&self, sender: &Watcher, message: &str) {
         if let Some(channel) = sender.channel.lock().as_ref() {
             if let Some(watchers) = self.channels.read().get(channel).map(|w| w.read()) {
+                let message = Message::Text(
+                    json!({
+                            "type": "bulletScreenMessage",
+                            "msg": message,
+                            "sentFrom": sender.name.read().as_str(),
+                            "uuid": self.counter.fetch_add(1, Ordering::Relaxed)
+                    })
+                    .to_string(),
+                );
                 for (_, watcher) in watchers.iter() {
-                    let _ = watcher.tx.unbounded_send(Message::Text(
-                        json!({
-                                "type": "bulletScreenMessage",
-                                "msg": message,
-                                "sentFrom": sender.name.read().as_str(),
-                                "uuid": self.counter.fetch_add(1, Ordering::Relaxed)
-                        })
-                        .to_string(),
-                    ));
+                    let _ = watcher.tx.unbounded_send(message.clone());
                 }
             }
         }
