@@ -34,6 +34,7 @@ struct State {
 struct Watcher {
     name: RwLock<String>,
     channel: Mutex<Option<String>>,
+    uuid: usize,
     tx: UnboundedSender<Message>,
 }
 
@@ -89,6 +90,7 @@ impl State {
                     json!({
                             "type": "channelData",
                             "name": watcher.name.read().as_str(),
+                            "uuid": watcher.uuid,
                             "nowViewerCount": watchers.len()
                     })
                     .to_string(),
@@ -105,7 +107,7 @@ impl State {
                             "type": "bulletScreenMessage",
                             "msg": message,
                             "sentFrom": sender.name.read().as_str(),
-                            "uuid": self.counter.fetch_add(1, Ordering::Relaxed)
+                            "uuid": sender.uuid
                     })
                     .to_string(),
                 );
@@ -115,13 +117,18 @@ impl State {
             }
         }
     }
+
+    pub fn next_uuid(&self) -> usize {
+        self.counter.fetch_add(1, Ordering::Relaxed)
+    }
 }
 
 impl Watcher {
-    fn new(tx: UnboundedSender<Message>) -> Watcher {
+    fn new(uuid: usize ,tx: UnboundedSender<Message>) -> Watcher {
         Watcher {
             name: RwLock::default(),
             channel: Mutex::default(),
+            uuid,
             tx,
         }
     }
@@ -163,7 +170,7 @@ async fn handle_connection(state: Arc<State>, addr: SocketAddr, stream: TcpStrea
 
     let (tx, rx) = unbounded();
     let (outgoing, incoming) = ws_stream.split();
-    let me = Arc::new(Watcher::new(tx));
+    let me = Arc::new(Watcher::new(state.next_uuid(), tx));
     let incoming_loop = incoming.try_for_each(|msg| {
         if !msg.is_text() {
             return future::ok(());
