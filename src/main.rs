@@ -14,10 +14,14 @@ use futures::{
     future, pin_mut, StreamExt, TryStreamExt,
 };
 use log::{error, info};
+use mimalloc::MiMalloc;
 use parking_lot::{Mutex, RwLock};
 use serde_json::{json, Value};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 type Channels = RwLock<HashMap<String, RwLock<HashMap<SocketAddr, Arc<Watcher>>>>>;
 
