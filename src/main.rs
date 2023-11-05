@@ -7,17 +7,22 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::Duration,
 };
 
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
-    future, pin_mut, StreamExt, TryStreamExt,
+    future, StreamExt, TryStreamExt,
 };
 use log::{error, info};
 use mimalloc::MiMalloc;
 use parking_lot::{Mutex, RwLock};
 use serde_json::{json, Value};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    pin, select,
+    time::sleep,
+};
 use tokio_tungstenite::tungstenite::Message;
 
 #[global_allocator]
@@ -124,7 +129,7 @@ impl State {
 }
 
 impl Watcher {
-    fn new(uuid: usize ,tx: UnboundedSender<Message>) -> Watcher {
+    fn new(uuid: usize, tx: UnboundedSender<Message>) -> Watcher {
         Watcher {
             name: RwLock::default(),
             channel: Mutex::default(),
@@ -170,7 +175,7 @@ async fn handle_connection(state: Arc<State>, addr: SocketAddr, stream: TcpStrea
 
     let (tx, rx) = unbounded();
     let (outgoing, incoming) = ws_stream.split();
-    let me = Arc::new(Watcher::new(state.next_uuid(), tx));
+    let me = Arc::new(Watcher::new(state.next_uuid(), tx.clone()));
     let incoming_loop = incoming.try_for_each(|msg| {
         if !msg.is_text() {
             return future::ok(());
@@ -213,10 +218,20 @@ async fn handle_connection(state: Arc<State>, addr: SocketAddr, stream: TcpStrea
     });
 
     let outgoing_loop = rx.map(Ok).forward(outgoing);
+    let keepalive = async {
+        loop {
+            sleep(Duration::from_secs(30)).await;
+            let _ = tx.unbounded_send(Message::Ping(vec![]));
+        }
+    };
 
     // looping
-    pin_mut!(incoming_loop, outgoing_loop);
-    future::select(incoming_loop, outgoing_loop).await;
+    pin!(incoming_loop, outgoing_loop, keepalive);
+    select! {
+        _ = incoming_loop => (),
+        _ = outgoing_loop => (),
+        _ = keepalive => ()
+    }
 
     info!("{} disconnected", &addr);
 
